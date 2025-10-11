@@ -1,0 +1,115 @@
+From 23e3d46d4ca126e8731e8c0cbb5673e9a848ceb5 Mon Sep 17 00:00:00 2001
+From: Augustin Zidek <augustinzidek@google.com>
+Date: Wed, 20 Nov 2024 14:19:38 +0000
+Subject: [PATCH] Fix setup to work with Python 3.12
+
+PiperOrigin-RevId: 698035568
+---
+ pyproject.toml                        |  3 ++-
+ src/alphafold3/build_data.py          | 13 +++++++++++--
+ src/alphafold3/model/mkdssp_pybind.cc | 28 ++++++++++++++++++---------
+ 3 files changed, 32 insertions(+), 12 deletions(-)
+
+diff --git a/pyproject.toml b/pyproject.toml
+index 618a045..837b586 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -22,11 +22,12 @@ dependencies = [
+     "jax==0.4.34",
+     "jax[cuda12]==0.4.34",
+     "jax-triton==0.2.0",
+-    "jaxtyping",
++    "jaxtyping==0.2.34",
+     "numpy",
+     "rdkit==2024.3.5",
+     "triton==3.1.0",
+     "tqdm",
++    "typeguard==2.13.3",
+     "zstandard",
+ ]
+ 
+diff --git a/src/alphafold3/build_data.py b/src/alphafold3/build_data.py
+index 1fcc9cf..0c33338 100644
+--- a/src/alphafold3/build_data.py
++++ b/src/alphafold3/build_data.py
+@@ -11,15 +11,24 @@
+ """Script for building intermediate data."""
+ 
+ from importlib import resources
++import pathlib
++import site
+ 
+ import alphafold3.constants.converters
+ from alphafold3.constants.converters import ccd_pickle_gen
+ from alphafold3.constants.converters import chemical_component_sets_gen
+-import share.libcifpp
+ 
+ 
+ def build_data():
+-  cif_path = resources.files(share.libcifpp).joinpath('components.cif')
++  """Builds intermediate data."""
++  for site_path in site.getsitepackages():
++    path = pathlib.Path(site_path) / 'share/libcifpp/components.cif'
++    if path.exists():
++      cif_path = path
++      break
++  else:
++    raise ValueError('Could not find components.cif')
++
+   out_root = resources.files(alphafold3.constants.converters)
+   ccd_pickle_path = out_root.joinpath('ccd.pickle')
+   chemical_component_sets_pickle_path = out_root.joinpath(
+diff --git a/src/alphafold3/model/mkdssp_pybind.cc b/src/alphafold3/model/mkdssp_pybind.cc
+index 492c1cd..27ca7b5 100644
+--- a/src/alphafold3/model/mkdssp_pybind.cc
++++ b/src/alphafold3/model/mkdssp_pybind.cc
+@@ -10,8 +10,7 @@
+ 
+ #include "alphafold3/model/mkdssp_pybind.h"
+ 
+-#include <stdlib.h>
+-#include <string>
++#include <filesystem>
+ 
+ #include <cif++/file.hpp>
+ #include <cif++/pdb.hpp>
+@@ -20,18 +19,29 @@
+ 
+ #include "absl/strings/string_view.h"
+ #include "pybind11/pybind11.h"
++#include "pybind11/pytypes.h"
+ 
+ namespace alphafold3 {
+ namespace py = pybind11;
+ 
+ void RegisterModuleMkdssp(pybind11::module m) {
+-  py::module resources = py::module::import("importlib.resources");
+-  py::module share_libcifpp = py::module::import("share.libcifpp");
+-  std::string data_dir =
+-      py::cast<std::string>(resources.attr("files")(share_libcifpp)
+-                                .attr("joinpath")('.')
+-                                .attr("as_posix")());
+-  setenv("LIBCIFPP_DATA_DIR", data_dir.c_str(), 0);
++  py::module site = py::module::import("site");
++  py::list paths = py::cast<py::list>(site.attr("getsitepackages")());
++  // Find the first path that contains the libcifpp components.cif file.
++  bool found = false;
++  for (const auto& py_path : paths) {
++    auto path_str =
++        std::filesystem::path(py::cast<absl::string_view>(py_path)) /
++        "share/libcifpp/components.cif";
++    if (std::filesystem::exists(path_str)) {
++      setenv("LIBCIFPP_DATA_DIR", path_str.parent_path().c_str(), 0);
++      found = true;
++      break;
++    }
++  }
++  if (!found) {
++    throw py::type_error("Could not find the libcifpp components.cif file.");
++  }
+   m.def(
+       "get_dssp",
+       [](absl::string_view mmcif, int model_no,
+-- 
+2.51.0
+
