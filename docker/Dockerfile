@@ -58,6 +58,9 @@ RUN (cd /hmmer_build/hmmer-3.4 && ./configure --prefix /hmmer) ; \
 COPY . /app/alphafold
 WORKDIR /app/alphafold
 
+# Apply upstream patch
+RUN patch -p1 < docker/0001-Fix-setup-to-work-with-Python-3.12.patch
+
 # Install setuptools (removed in Python 3.12) which some libraries still need.
 # Then install the Python dependencies of AlphaFold 3.
 RUN pip3 install --no-cache-dir setuptools \
