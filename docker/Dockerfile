@@ -65,7 +65,7 @@ RUN (cd /hmmer_build/hmmer-3.4 && ./configure --prefix /hmmer) ; \
 ARG MMSEQS_RELEASE=18-8cc5c
 RUN mkdir /mmseqs2_pkg /mmseqs ; \
     wget https://github.com/soedinglab/MMseqs2/releases/download/$MMSEQS_RELEASE/mmseqs-linux-gpu.tar.gz --directory-prefix /mmseqs2_pkg ; \
-    tar zxf /mmseqs2_pkg/mmseqs-linux-gpu.tar.gz -C /mmseqs --strip-components 1 ;
+    tar zxf /mmseqs2_pkg/mmseqs-linux-gpu.tar.gz -C /mmseqs --strip-components 1 ; \
     rm -fr /mmseqs2_pkg
 
 # Copy the AlphaFold 3 source code from the local machine to the container and
