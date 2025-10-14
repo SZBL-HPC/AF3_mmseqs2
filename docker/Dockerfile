@@ -10,6 +10,11 @@
 
 FROM nvidia/cuda:12.6.3-base-ubuntu24.04
 
+ARG CACHE_DIR=/pip_cache
+RUN mkdir -p ${CACHE_DIR} && chmod 777 ${CACHE_DIR}
+
+ENV PIP_CACHE_DIR=$CACHE_DIR
+
 # Some RUN statements are combined together to make Docker build run faster.
 # Get latest package listing, install python, git, wget, compilers and libs.
 # * git is required for pyproject.toml toolchain's use of CMakeLists.txt.
@@ -18,15 +23,18 @@ FROM nvidia/cuda:12.6.3-base-ubuntu24.04
 RUN DEBIAN_FRONTEND=noninteractive \
     apt-get update --quiet \
     && apt-get install --yes --quiet python3.12 python3-pip python3.12-venv python3.12-dev \
-    && apt-get install --yes --quiet git wget gcc g++ make zlib1g-dev zstd
+    && apt-get install --yes --quiet git wget gcc g++ make zlib1g-dev zstd \
+    && apt-get install -y gawk bash grep libstdc++6 libgomp1 libatomic1 zlib1g libbz2-1.0 wget tar aria2 \
+    && rm -rf /var/lib/apt/lists/*
 
 # The base image uses Python 3.12. For local installation use 3.11 or greater.
 RUN python3 -m venv /alphafold3_venv
-ENV PATH="/hmmer/bin:/alphafold3_venv/bin:$PATH"
+ENV PATH="/mmseqs/bin:/hmmer/bin:/alphafold3_venv/bin:$PATH"
 # Update pip to the latest version. Not necessary in Docker, but good to do when
 # this is used as a recipe for local installation since we rely on new pip
 # features for secure installs.
-RUN pip3 install --no-cache-dir --upgrade pip
+RUN --mount=type=cache,target=/pip_cache \
+    pip3 install --upgrade pip
 
 # Install HMMER. Do so before copying the source code, so that docker can cache
 # the image layer containing HMMER. Alternatively, you could also install it
@@ -53,6 +61,13 @@ RUN (cd /hmmer_build/hmmer-3.4 && ./configure --prefix /hmmer) ; \
     (cd /hmmer_build/hmmer-3.4/easel && make install) ; \
     rm -R /hmmer_build
 
+# Download MMseqs2
+ARG MMSEQS_RELEASE=18-8cc5c
+RUN mkdir /mmseqs2_pkg /mmseqs ; \
+    wget https://github.com/soedinglab/MMseqs2/releases/download/$MMSEQS_RELEASE/mmseqs-linux-gpu.tar.gz --directory-prefix /mmseqs2_pkg ; \
+    tar zxf /mmseqs2_pkg/mmseqs-linux-gpu.tar.gz -C /mmseqs --strip-components 1 ;
+    rm -fr /mmseqs2_pkg
+
 # Copy the AlphaFold 3 source code from the local machine to the container and
 # set the working directory to there.
 COPY . /app/alphafold
@@ -63,9 +78,10 @@ RUN patch -p1 < docker/0001-Fix-setup-to-work-with-Python-3.12.patch
 
 # Install setuptools (removed in Python 3.12) which some libraries still need.
 # Then install the Python dependencies of AlphaFold 3.
-RUN pip3 install --no-cache-dir setuptools \
-    && pip3 install --no-cache-dir -r dev-requirements.txt \
-    && pip3 install --no-cache-dir --no-deps .
+RUN --mount=type=cache,target=/pip_cache \
+    pip3 install setuptools \
+    && pip3 install -r dev-requirements.txt \
+    && pip3 install --no-deps .
 # Build chemical components database (this binary was installed by pip).
 RUN build_data
 
